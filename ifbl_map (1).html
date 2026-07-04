@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IFBL Route Optimizer — Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
+body{display:flex;height:100vh;background:#0d1117;color:#c9d1d9}
+#sidebar{width:340px;flex-shrink:0;background:#161b22;border-right:1px solid #30363d;display:flex;flex-direction:column;overflow:hidden}
+#map{flex:1}
+.sidebar-header{padding:14px 16px;border-bottom:1px solid #30363d;background:#0d1117}
+.sidebar-header h1{font-size:15px;color:#fff;margin-bottom:2px}
+.sidebar-header p{font-size:11px;color:#8b949e}
+.section{padding:12px 16px;border-bottom:1px solid #21262d}
+.section label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px}
+input,select{width:100%;padding:7px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;margin-bottom:6px}
+input:focus,select:focus{outline:none;border-color:#58a6ff}
+.btn{width:100%;padding:8px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px}
+.btn-blue{background:#1f6feb;color:#fff}.btn-blue:hover{background:#388bfd}
+.btn-green{background:#238636;color:#fff}.btn-green:hover{background:#2ea043}
+.btn-red{background:#da3633;color:#fff}.btn-red:hover{background:#f85149}
+.btn-gray{background:#21262d;color:#8b949e}.btn-gray:hover{background:#30363d;color:#c9d1d9}
+.loc-list{flex:1;overflow-y:auto;padding:8px}
+.loc-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;margin-bottom:4px;background:#0d1117;border:1px solid #21262d;font-size:12px}
+.loc-item:hover{border-color:#30363d}
+.loc-num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.depot{background:#f0883e33;color:#f0883e}
+.delivery{background:#39d98a33;color:#39d98a}
+.loc-info{flex:1}
+.loc-name{font-weight:600;color:#e6edf3}
+.loc-coords{color:#8b949e;font-size:10px}
+.del-btn{background:none;border:none;color:#f85149;cursor:pointer;font-size:14px;padding:2px 4px}
+.results{padding:12px 16px;border-top:1px solid #30363d;background:#0d1117}
+.result-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid #21262d}
+.result-row:last-child{border:none}
+.result-label{color:#8b949e}
+.result-val{color:#39d98a;font-weight:600}
+.route-step{padding:4px 8px;font-size:11px;color:#8b949e;border-left:2px solid #21262d;margin:2px 0 2px 8px}
+.route-step.active{border-color:#39d98a;color:#c9d1d9}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #30363d;padding:8px 16px;border-radius:8px;font-size:13px;z-index:9999;display:none}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h1>🗺️ IFBL Route Optimizer</h1>
+    <p>OpenStreetMap — Free, no API key needed</p>
+  </div>
+
+  <!-- Add location -->
+  <div class="section">
+    <label>Add Delivery Location</label>
+    <input id="loc-name" placeholder="Location name (e.g. Gulshan-e-Iqbal)"/>
+    <div style="display:flex;gap:6px">
+      <input id="loc-lat" placeholder="Latitude (e.g. 24.9215)" style="width:50%"/>
+      <input id="loc-lng" placeholder="Longitude (e.g. 67.0944)" style="width:50%"/>
+    </div>
+    <button class="btn btn-blue" onclick="addLocation()">+ Add Location</button>
+    <button class="btn btn-gray" onclick="pickOnMap()">📍 Click on Map to Pick</button>
+  </div>
+
+  <!-- Algorithm -->
+  <div class="section">
+    <label>Algorithm</label>
+    <select id="algo">
+      <option value="auto">Auto (Exact ≤13, Heuristic >13)</option>
+      <option value="nn">Force Nearest-Neighbor (Heuristic)</option>
+      <option value="exact">Force Held-Karp (Exact)</option>
+    </select>
+    <button class="btn btn-green" onclick="optimize()">🚀 Optimize Route</button>
+    <button class="btn btn-red" onclick="clearAll()">🗑️ Clear All</button>
+  </div>
+
+  <!-- Location list -->
+  <div style="padding:8px 16px 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.8px">
+    Locations (<span id="loc-count">1</span>)
+  </div>
+  <div class="loc-list" id="loc-list"></div>
+
+  <!-- Results -->
+  <div class="results" id="results" style="display:none">
+    <label style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Results</label>
+    <div class="result-row"><span class="result-label">Algorithm</span><span class="result-val" id="r-algo">—</span></div>
+    <div class="result-row"><span class="result-label">Total Distance</span><span class="result-val" id="r-dist">—</span></div>
+    <div class="result-row"><span class="result-label">Stops</span><span class="result-val" id="r-stops">—</span></div>
+    <div style="margin-top:8px;font-size:11px;color:#8b949e">Route:</div>
+    <div id="r-route"></div>
+  </div>
+</div>
+
+<div id="map"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Default IFBL Karachi locations ──────────────────────────────────────────
+let locations = [
+  {id:0,  name:"IFBL Head Office (Depot)", lat:24.8607, lng:67.0011, isDepot:true},
+  {id:1,  name:"Gulshan-e-Iqbal",          lat:24.9215, lng:67.0944},
+  {id:2,  name:"DHA Phase 5",              lat:24.8123, lng:67.0775},
+  {id:3,  name:"Clifton Block 5",          lat:24.8133, lng:67.0298},
+  {id:4,  name:"North Nazimabad",          lat:24.9474, lng:67.0304},
+  {id:5,  name:"Saddar",                   lat:24.8553, lng:67.0104},
+  {id:6,  name:"Korangi",                  lat:24.8305, lng:67.1284},
+  {id:7,  name:"Malir",                    lat:24.8930, lng:67.1927},
+  {id:8,  name:"Tariq Road",               lat:24.8615, lng:67.0317},
+  {id:9,  name:"Nazimabad",                lat:24.9158, lng:67.0285},
+  {id:10, name:"Liaquatabad",              lat:24.9040, lng:67.0423},
+  {id:11, name:"FB Area",                  lat:24.9370, lng:67.0650},
+  {id:12, name:"Orangi Town",              lat:24.9480, lng:66.9942},
+  {id:13, name:"Landhi",                   lat:24.8527, lng:67.2052},
+  {id:14, name:"Shah Faisal Colony",       lat:24.8741, lng:67.1562},
+];
+nextId = 15;
+let nextId = 15;
+let markers = [];
+let routeLine = null;
+let pickingMode = false;
+
+// ── Map setup ───────────────────────────────────────────────────────────────
+const map = L.map('map').setView([24.8607, 67.0011], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© OpenStreetMap contributors', maxZoom:19
+}).addTo(map);
+
+map.on('click', function(e){
+  if(!pickingMode) return;
+  const name = document.getElementById('loc-name').value.trim() || `Location ${nextId}`;
+  document.getElementById('loc-lat').value = e.latlng.lat.toFixed(6);
+  document.getElementById('loc-lng').value = e.latlng.lng.toFixed(6);
+  document.getElementById('loc-name').focus();
+  pickingMode = false;
+  map.getContainer().style.cursor = '';
+  showToast(`📍 Coordinates picked! Enter a name and click Add.`);
+});
+
+// ── Icon helpers ────────────────────────────────────────────────────────────
+function makeIcon(label, color){
+  return L.divIcon({
+    html:`<div style="background:${color};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4)">${label}</div>`,
+    className:'', iconSize:[28,28], iconAnchor:[14,14]
+  });
+}
+
+// ── Render markers ──────────────────────────────────────────────────────────
+function renderMarkers(){
+  markers.forEach(m=>map.removeLayer(m));
+  markers = [];
+  locations.forEach((loc,i)=>{
+    const color = loc.isDepot ? '#f0883e' : '#39d98a';
+    const label = loc.isDepot ? 'D' : i;
+    const m = L.marker([loc.lat, loc.lng], {icon: makeIcon(label, color)})
+      .addTo(map)
+      .bindPopup(`<b>${loc.name}</b><br>Lat: ${loc.lat.toFixed(4)}, Lng: ${loc.lng.toFixed(4)}`);
+    markers.push(m);
+  });
+  renderList();
+}
+
+// ── Render sidebar list ─────────────────────────────────────────────────────
+function renderList(){
+  const el = document.getElementById('loc-list');
+  document.getElementById('loc-count').textContent = locations.length;
+  el.innerHTML = locations.map((loc,i)=>`
+    <div class="loc-item">
+      <div class="loc-num ${loc.isDepot?'depot':'delivery'}">${loc.isDepot?'D':i}</div>
+      <div class="loc-info">
+        <div class="loc-name">${loc.name}</div>
+        <div class="loc-coords">${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}</div>
+      </div>
+      ${!loc.isDepot?`<button class="del-btn" onclick="removeLocation(${loc.id})" title="Remove">✕</button>`:''}
+    </div>
+  `).join('');
+}
+
+// ── Add location ────────────────────────────────────────────────────────────
+function addLocation(){
+  const name = document.getElementById('loc-name').value.trim();
+  const lat  = parseFloat(document.getElementById('loc-lat').value);
+  const lng  = parseFloat(document.getElementById('loc-lng').value);
+  if(!name){ showToast('⚠️ Enter a location name'); return; }
+  if(isNaN(lat)||isNaN(lng)){ showToast('⚠️ Enter valid latitude and longitude'); return; }
+  if(lat<20||lat>30||lng<60||lng>70){ showToast('⚠️ Coordinates seem outside Pakistan. Check lat/lng.'); }
+  locations.push({id:nextId++, name, lat, lng, isDepot:false});
+  document.getElementById('loc-name').value='';
+  document.getElementById('loc-lat').value='';
+  document.getElementById('loc-lng').value='';
+  map.setView([lat,lng], 13);
+  renderMarkers();
+  showToast(`✅ ${name} added!`);
+}
+
+// ── Remove location ─────────────────────────────────────────────────────────
+function removeLocation(id){
+  locations = locations.filter(l=>l.id!==id);
+  renderMarkers();
+  if(routeLine){ map.removeLayer(routeLine); routeLine=null; }
+  document.getElementById('results').style.display='none';
+}
+
+// ── Pick on map mode ────────────────────────────────────────────────────────
+function pickOnMap(){
+  pickingMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  showToast('🗺️ Click anywhere on the map to pick coordinates');
+}
+
+// ── Distance (Haversine — real km) ─────────────────────────────────────────
+function haversine(a, b){
+  const R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
+  const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));
+}
+
+function buildDistMatrix(){
+  return locations.map(a=>locations.map(b=>haversine(a,b)));
+}
+
+// ── Nearest-Neighbor ────────────────────────────────────────────────────────
+function nearestNeighbor(dist){
+  const n=dist.length, visited=new Set([0]);
+  let route=[0], cur=0, total=0;
+  while(visited.size<n){
+    let best=-1, bestD=Infinity;
+    for(let j=0;j<n;j++){
+      if(!visited.has(j)&&dist[cur][j]<bestD){ bestD=dist[cur][j]; best=j; }
+    }
+    total+=bestD; route.push(best); visited.add(best); cur=best;
+  }
+  total+=dist[cur][0]; route.push(0);
+  return {cost:total, route};
+}
+
+// ── Held-Karp ───────────────────────────────────────────────────────────────
+function heldKarp(dist){
+  const n=dist.length;
+  if(n===1) return {cost:0,route:[0]};
+  const others=[...Array(n).keys()].slice(1);
+  const dp={}, par={};
+  for(const j of others){ dp[`${1<<(j-1)},${j}`]=dist[0][j]; par[`${1<<(j-1)},${j}`]=0; }
+  for(let sz=2;sz<n;sz++){
+    const combos=combine(others,sz);
+    for(const subset of combos){
+      const smask=subset.reduce((a,v)=>a|(1<<(v-1)),0);
+      for(const j of subset){
+        const pmask=smask^(1<<(j-1));
+        let best=Infinity, bp=null;
+        for(const k of subset){ if(k===j)continue; const c=dp[`${pmask},${k}`]+dist[k][j]; if(c<best){best=c;bp=k;} }
+        dp[`${smask},${j}`]=best; par[`${smask},${j}`]=bp;
+      }
+    }
+  }
+  const full=others.reduce((a,v)=>a|(1<<(v-1)),0);
+  let best=Infinity, last=null;
+  for(const j of others){ const c=dp[`${full},${j}`]+dist[j][0]; if(c<best){best=c;last=j;} }
+  // reconstruct
+  let route=[0], mask=full, cur=last, path=[];
+  while(cur!==0){ path.push(cur); const p=par[`${mask},${cur}`]; mask^=(1<<(cur-1)); cur=p; }
+  route=[0,...path.reverse(),0];
+  return {cost:best, route};
+}
+
+function combine(arr,k){
+  if(k===1) return arr.map(x=>[x]);
+  const res=[];
+  for(let i=0;i<arr.length-k+1;i++){
+    const rest=combine(arr.slice(i+1),k-1);
+    for(const r of rest) res.push([arr[i],...r]);
+  }
+  return res;
+}
+
+// ── Optimize ────────────────────────────────────────────────────────────────
+function optimize(){
+  if(locations.length<3){ showToast('⚠️ Add at least 2 delivery locations'); return; }
+  const dist=buildDistMatrix();
+  const n=locations.length-1; // delivery count
+  const algo=document.getElementById('algo').value;
+  let result, algoName;
+  if(algo==='nn'||(algo==='auto'&&n>13)){
+    result=nearestNeighbor(dist); algoName='Nearest-Neighbor (Heuristic)';
+  } else {
+    try{ result=heldKarp(dist); algoName='Held-Karp (Exact)'; }
+    catch(e){ result=nearestNeighbor(dist); algoName='Nearest-Neighbor (fallback)'; }
+  }
+
+  // Draw route on map
+  if(routeLine) map.removeLayer(routeLine);
+  const latlngs=result.route.map(i=>[locations[i].lat, locations[i].lng]);
+  routeLine=L.polyline(latlngs,{color:'#58a6ff',weight:3,opacity:.8,dashArray:'8,4'}).addTo(map);
+  map.fitBounds(routeLine.getBounds(),{padding:[30,30]});
+
+  // Show results
+  document.getElementById('results').style.display='block';
+  document.getElementById('r-algo').textContent=algoName;
+  document.getElementById('r-dist').textContent=result.cost.toFixed(2)+' km';
+  document.getElementById('r-stops').textContent=(result.route.length-2)+' deliveries';
+  document.getElementById('r-route').innerHTML=result.route.map((i,step)=>`
+    <div class="route-step active">${step+1}. ${locations[i].name}</div>
+  `).join('');
+
+  showToast(`✅ Route optimized — ${result.cost.toFixed(2)} km`);
+}
+
+// ── Clear all ────────────────────────────────────────────────────────────────
+function clearAll(){
+  locations=[{id:0,name:"IFBL Head Office (Depot)",lat:24.8607,lng:67.0011,isDepot:true}];
+  nextId=1;
+  if(routeLine){map.removeLayer(routeLine);routeLine=null;}
+  document.getElementById('results').style.display='none';
+  renderMarkers();
+  showToast('🗑️ Cleared — depot remains');
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.display='block';
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2500);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+renderMarkers();
+</script>
+</body>
+</html>
